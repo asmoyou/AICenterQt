@@ -11,10 +11,14 @@ from PySide6.QtGui import *
 from PySide6.QtWidgets import *
 from qt_material import apply_stylesheet
 import ui_main
+import _thread
 
-os.environ["QT_FONT_DPI"] = "96"
+# os.environ["QT_FONT_DPI"] = "96"
 widgets = None
-thresh_hold = 0.2
+thresh_hold = 0.3
+basic_auth = None
+serviceUrl = None
+fps = 0
 modelDict = {"目标检测算法": "object",
              "车辆检测算法": "vehicle",
              "人脸检测算法": "faceDetection",
@@ -33,6 +37,22 @@ def cv2_to_base64(image):
     data = cv2.imencode('.jpg', image)[1]
     return base64.b64encode(data.tostring()).decode('utf-8')
 
+def predict(model, frame):
+    model_url = modelDict[model]
+    url = serviceUrl + model_url
+    image = cv2_to_base64(frame)
+    data = {'images': [image]}
+    headers = {"Content-type": "application/json"}
+    start_time = time.time()
+    r = requests.post(url=url, headers=headers, data=json.dumps(data), auth=basic_auth)
+    cost_time = time.time() - start_time
+    global fps
+    global results
+    fps = 1 / cost_time
+    rs = r.json()['results'][0]
+    results = [x for x in rs if x['score'] > thresh_hold]
+    return results
+
 class Thread(QThread):
     updateFrame = Signal(QImage)
 
@@ -42,22 +62,6 @@ class Thread(QThread):
         self.status = False
         self.cap = True
         self.analyze = False
-        self.serviceUrl = None
-        self.username = None
-        self.passwd = None
-
-    def predict(self, model, frame):
-        model_url = modelDict[model]
-        url = os.path.join(self.serviceUrl, "predict")
-        url = os.path.join(url, model_url)
-        image = cv2_to_base64(frame)
-        data = {'images': [image]}
-        headers = {"Content-type": "application/json"}
-        basic_auth = HTTPBasicAuth(self.username, self.passwd)
-        r = requests.post(url=url, headers=headers, data=json.dumps(data), auth=basic_auth)
-        results = r.json()['results'][0]
-        tresult = [x for x in results if x['score'] > thresh_hold]
-        return tresult
 
     def run(self):
         videoSource = widgets.videoSource.text()
@@ -70,36 +74,47 @@ class Thread(QThread):
         ret, frame = self.cap.read()
         # loop over the frames of the video
         count = 0
-        fps = 0
-        results = []
+        global fps
+        global results
         while self.status and self.cap.isOpened():
             count += 1
             ret, frame = self.cap.read()
             if not ret:
                 continue
 
-            if self.analyze and count % 20 == 0:
-                start_time = time.time()
-                results = self.predict(self.model, frame)
-                cost_time = time.time() - start_time
+            if self.analyze and count % 15 == 0:
+                # results = predict(self.model, frame)
+                _thread.start_new_thread(predict, (self.model, frame, ))
                 count = 0
-                fps = 1 / cost_time
             if not self.analyze:
                 results = []
                 fps = 0
 
             info_description = "fps: {:.2f}".format(fps)
             cv2.putText(frame, info_description, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-            for result in results:
-                label = result['category'] + ":" + str(round(result['score'], 2))
-                xmin, ymin, w, h = result['bbox']
-                pt1 = (int(xmin), int(ymin))
-                pt2 = (int(xmin + w), int(ymin + h))
-                pad_len = 15 * len(label)
-                pt1_pad = (int(pt1[0] + pad_len), int(pt1[1] - 30))
-                cv2.rectangle(frame, pt1, pt1_pad, (0, 0, 255), -1)
-                cv2.putText(frame, label, pt1, cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-                cv2.rectangle(frame, pt1, pt2, color=(0, 0, 255), thickness=2, lineType=4)
+            if self.model in ["行为检测算法"]:
+                for result in results:
+                    # print(result)
+                    label = result['smoke'] + "-" + result['cellphone']+ "-" + result['headwear'] + ":" + str(round(result['score'], 2))
+                    xmin, ymin, w, h = result['bbox']
+                    pt1 = (int(xmin), int(ymin))
+                    pt2 = (int(xmin + w), int(ymin + h))
+                    pad_len = 15 * len(label)
+                    pt1_pad = (int(pt1[0] + pad_len), int(pt1[1] - 30))
+                    cv2.rectangle(frame, pt1, pt1_pad, (0, 0, 255), -1)
+                    cv2.putText(frame, label, pt1, cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                    cv2.rectangle(frame, pt1, pt2, color=(0, 0, 255), thickness=2, lineType=4)
+            else:
+                for result in results:
+                    label = result['category'] + ":" + str(round(result['score'], 2))
+                    xmin, ymin, w, h = result['bbox']
+                    pt1 = (int(xmin), int(ymin))
+                    pt2 = (int(xmin + w), int(ymin + h))
+                    pad_len = 15 * len(label)
+                    pt1_pad = (int(pt1[0] + pad_len), int(pt1[1] - 30))
+                    cv2.rectangle(frame, pt1, pt1_pad, (0, 0, 255), -1)
+                    cv2.putText(frame, label, pt1, cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                    cv2.rectangle(frame, pt1, pt2, color=(0, 0, 255), thickness=2, lineType=4)
 
             color_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             # Creating and scaling Qimage
@@ -118,7 +133,6 @@ class MainWindow(QMainWindow):
         self.ui.setupUi(self)
         global widgets
         widgets = self.ui
-        self.cwd = os.getcwd()
         self.setWindowTitle("算法测试工具v0.1")
 
         # ui setting
@@ -135,21 +149,22 @@ class MainWindow(QMainWindow):
 
         # style
         self.ui.mainLayout.setContentsMargins(10, 10, 10, 10)
-        self.ui.algorithmList.setStyleSheet(
-            """
-            width: 200px;
-            """
-        )
+        self.ui.algorithmList.setFixedSize(200, 35)
+        # self.ui.algorithmList.setStyleSheet(
+        #     """
+        #     width: 200px;
+        #     """
+        # )
 
         # fill data
         for key in modelDict:
             self.ui.algorithmList.addItem(key)
 
         # debug
-        self.ui.videoSource.setText("rtsp://admin:ROTANAVA2019@192.168.0.101:554/h265/ch0/main/av_stream")
-        self.ui.serviceUrl.setText("http://192.168.0.165:9080")
-        self.ui.username.setText("rotanova")
-        self.ui.password.setText("RotaNova@2020")
+        # self.ui.videoSource.setText("rtsp://admin:ROTANAVA2019@192.168.0.101:554/h265/ch0/main/av_stream")
+        self.ui.serviceUrl.setText("http://192.168.0.165:8866")
+        self.ui.username.setText("username")
+        self.ui.password.setText("password")
 
 
         # Thread in charge of updating the image
@@ -181,6 +196,7 @@ class MainWindow(QMainWindow):
         time.sleep(1)
         print("Thread finished.")
         self.ui.video.setText("视频已关闭")
+        self.ui.closeVideo.setEnabled(False)
 
     def set_serviceUrl(self, text):
         # print("设置服务地址:{}".format(text))
@@ -204,9 +220,10 @@ class MainWindow(QMainWindow):
     @Slot()
     def start_analyze(self):
         self.th.analyze = True
-        self.th.serviceUrl = self.ui.serviceUrl.text()
-        self.th.username = self.ui.username.text()
-        self.th.passwd = self.ui.password.text()
+        global serviceUrl
+        global basic_auth
+        serviceUrl = self.ui.serviceUrl.text() + '/predict/'
+        basic_auth = HTTPBasicAuth(self.ui.username.text(), self.ui.password.text())
         self.ui.stopAnalyze.setEnabled(True)
 
     @Slot()
