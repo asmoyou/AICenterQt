@@ -5,5 +5,5 @@
 ## 运行
 ```python main.py```
 ## 打包说明
-```pyinstaller -F -w main.py```
+```pyinstaller -D -w main.py```
 ## 参数说明
