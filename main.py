@@ -162,9 +162,9 @@ class MainWindow(QMainWindow):
 
         # debug
         # self.ui.videoSource.setText("rtsp://admin:ROTANAVA2019@192.168.0.101:554/h265/ch0/main/av_stream")
-        self.ui.serviceUrl.setText("http://192.168.0.165:8866")
-        self.ui.username.setText("username")
-        self.ui.password.setText("password")
+        self.ui.serviceUrl.setText("http://isc.rotanova.top:9980")
+        self.ui.username.setText("rotanova")
+        self.ui.password.setText("RotaNova@2020")
 
 
         # Thread in charge of updating the image
